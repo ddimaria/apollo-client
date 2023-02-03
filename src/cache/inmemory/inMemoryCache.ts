@@ -17,7 +17,6 @@ import {
   isReference,
 } from '../../utilities';
 import {
-  DocumentTransform,
   InMemoryCacheConfig,
   NormalizedCacheObject,
 } from './types';
@@ -26,6 +25,7 @@ import { StoreWriter } from './writeToStore';
 import { EntityStore, supportsResultCaching } from './entityStore';
 import { makeVar, forgetCache, recallCache } from './reactiveVars';
 import { Policies } from './policies';
+import { DocumentTransformer } from './documentTransformer';
 import { hasOwn, normalizeConfig, shouldCanonizeResults } from './helpers';
 import { canonicalStringify } from './object-canon';
 import { OperationVariables } from '../../core';
@@ -47,8 +47,6 @@ export class InMemoryCache extends ApolloCache<NormalizedCacheObject> {
   private typenameDocumentCache = new Map<DocumentNode, DocumentNode>();
   private storeReader: StoreReader;
   private storeWriter: StoreWriter;
-  private documentTransforms: DocumentTransform[];
-  private documentTransformsForLink: DocumentTransform[];
 
   private maybeBroadcastWatch: OptimisticWrapperFunction<
     [Cache.WatchOptions, BroadcastOptions?],
@@ -60,6 +58,12 @@ export class InMemoryCache extends ApolloCache<NormalizedCacheObject> {
   // cache.policies.addPossibletypes.
   public readonly policies: Policies;
 
+  // Dynamically imported code can augment existing documentTransforms or
+  // documentTransformsForLink by calling cache.documentTransforms.add or 
+  // cache.documentTransformsForLink.add
+  public readonly documentTransforms: DocumentTransformer;
+  public readonly documentTransformsForLink: DocumentTransformer;
+
   public readonly makeVar = makeVar;
 
   constructor(config: InMemoryCacheConfig = {}) {
@@ -67,13 +71,23 @@ export class InMemoryCache extends ApolloCache<NormalizedCacheObject> {
     this.config = normalizeConfig(config);
     this.addTypename = !!this.config.addTypename;
 
-    this.documentTransforms = [
-      this.addTypenameToDocument.bind(this),
-    ].concat(config.documentTransformsForLink ?? []);
+    this.documentTransforms = new DocumentTransformer({
+      transforms: [this.addTypenameToDocument.bind(this)]
+    });
 
-    this.documentTransformsForLink = [
-      this.addFragmentsToDocument.bind(this),
-    ].concat(this.config.documentTransformsForLink ?? []);
+    if (this.config.documentTransforms) {
+      this.documentTransforms.add(...this.config.documentTransforms);
+    }
+
+    this.documentTransformsForLink = new DocumentTransformer({
+      transforms: [this.addFragmentsToDocument.bind(this)]
+    });
+
+    if (this.config.documentTransformsForLink) {
+      this.documentTransformsForLink.add(
+        ...this.config.documentTransformsForLink
+      );
+    }
 
     this.policies = new Policies({
       cache: this,
@@ -517,15 +531,11 @@ export class InMemoryCache extends ApolloCache<NormalizedCacheObject> {
   }
 
   public transformDocument(document: DocumentNode): DocumentNode {
-    return this.documentTransforms.reduce((document, transform) => {
-      return transform(document);
-    }, document);
+    return this.documentTransforms.transform(document);
   }
 
   public transformForLink(document: DocumentNode): DocumentNode {
-    return this.documentTransformsForLink.reduce((document, transform) => {
-      return transform(document);
-    }, document);
+    return this.documentTransformsForLink.transform(document);
   }
 
   protected broadcastWatches(options?: BroadcastOptions) {
