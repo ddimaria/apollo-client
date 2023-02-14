@@ -95,8 +95,6 @@ export function useBackgroundQuery_experimental<
   let cacheEntry = suspenseCache.lookup(query, variables);
 
   const [observable] = useState(() => {
-    // TODO: may not need watchQuery under the hood,
-    // maybe uBQ can only be used with fragments
     return cacheEntry?.observable || client.watchQuery(watchQueryOptions);
   });
 
