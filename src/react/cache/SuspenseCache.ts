@@ -13,6 +13,35 @@ interface CacheEntry<TData, TVariables extends OperationVariables> {
   promise: Promise<ApolloQueryResult<TData>>;
 }
 
+enum PromiseStatus {
+  pending = 'pending',
+  fulfilled = 'fulfilled',
+  rejected = 'rejected',
+}
+
+interface WrappedPendingPromise extends Promise<any> {
+  status?: PromiseStatus.pending,
+  // value?: never,
+  // reason?: never,
+}
+
+interface WrappedFulfilledPromise extends Promise<any> {
+  status?: PromiseStatus.fulfilled,
+  // value?: T,
+  // reason?: never,
+}
+
+interface WrappedRejectedPromise extends Promise<any> {
+  status?: PromiseStatus.rejected,
+  // value?: never,
+  // reason?: any,
+}
+
+export type WrappedSuspenseCachePromise =
+  | WrappedPendingPromise
+  | WrappedFulfilledPromise
+  | WrappedRejectedPromise;
+
 export class SuspenseCache {
   private queries = new Map<
     DocumentNode,
@@ -25,10 +54,16 @@ export class SuspenseCache {
     {
       promise,
       observable,
-    }: { promise: Promise<any>; observable: ObservableQuery<TData, TVariables> }
+    }: {
+      // TODO: fix nextline
+      promise: WrappedSuspenseCachePromise<TVariables>;
+      observable: ObservableQuery<TData, TVariables>;
+    }
   ) {
     const variablesKey = this.getVariablesKey(variables);
     const map = this.queries.get(query) || new Map();
+
+    promise.status = PromiseStatus.pending;
 
     const entry: CacheEntry<TData, TVariables> = {
       observable,
@@ -37,8 +72,10 @@ export class SuspenseCache {
         .catch(() => {
           // Throw away the error as we only care to track when the promise has
           // been fulfilled
+          promise.status = PromiseStatus.rejected;
         })
         .finally(() => {
+          promise.status = PromiseStatus.fulfilled;
           entry.fulfilled = true;
         }),
     };

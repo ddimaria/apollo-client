@@ -29,13 +29,16 @@ describe('useBackgroundQuery', () => {
       ),
     });
 
-    const { observable } = result.current;
+    const { promise, observable } = result.current;
 
     // the result is loading
     expect(observable.getCurrentResult().loading).toBe(true);
     expect(observable.getCurrentResult().networkStatus).toBe(
       NetworkStatus.loading
     );
+
+    // sets status on promise object
+    expect(promise.status).toBe('pending');
 
     // once the data is fetched, loading is false and network status is ready
     await waitFor(() => {
@@ -310,7 +313,7 @@ describe('useBackgroundQuery', () => {
           }
         );
 
-        const { observable } = result.current;
+        const { promise, observable } = result.current;
 
         // the result is loading and initial data is in the cache
         expect(observable.getCurrentResult().loading).toBe(true);
@@ -325,6 +328,9 @@ describe('useBackgroundQuery', () => {
         expect(observable.getCurrentResult().networkStatus).toBe(
           NetworkStatus.ready
         );
+
+        expect(promise.status).toBe('fulfilled');
+
         // data has been replaced by the link data
         expect(observable.getCurrentResult().data).toEqual({
           hello: 'from link',

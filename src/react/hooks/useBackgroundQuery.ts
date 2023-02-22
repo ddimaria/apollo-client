@@ -1,15 +1,20 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import {
   ApolloClient,
   DocumentNode,
+  ObservableQuery,
   OperationVariables,
   TypedDocumentNode,
   WatchQueryOptions,
 } from '../../core';
 import { compact } from '../../utilities';
 import { useApolloClient } from './useApolloClient';
-import { SuspenseQueryHookOptions } from '../types/types';
+import {
+  SuspenseQueryHookOptions,
+  ObservableQueryFields,
+} from '../types/types';
 import { useDeepMemo } from './internal';
+import { WrappedSuspenseCachePromise } from '../cache/SuspenseCache';
 import { useSuspenseCache } from './useSuspenseCache';
 
 const DEFAULT_FETCH_POLICY = 'cache-first';
@@ -79,6 +84,15 @@ function useWatchQueryOptions<TData, TVariables extends OperationVariables>({
 /////////
 // End //
 /////////
+export interface UseBackgroundQueryResult<
+  TData = any,
+  TVariables extends OperationVariables = OperationVariables
+> {
+  promise: WrappedSuspenseCachePromise;
+  observable: ObservableQuery<TData, TVariables>;
+  fetchMore: ObservableQueryFields<TData, TVariables>['fetchMore'];
+  refetch: ObservableQueryFields<TData, TVariables>['refetch'];
+}
 
 export function useBackgroundQuery_experimental<
   TData = any,
@@ -86,7 +100,7 @@ export function useBackgroundQuery_experimental<
 >(
   query: DocumentNode | TypedDocumentNode<TData, TVariables>,
   options: SuspenseQueryHookOptions<TData, TVariables> = Object.create(null)
-) {
+): UseBackgroundQueryResult<TData, TVariables> {
   const suspenseCache = useSuspenseCache();
   const client = useApolloClient(options.client);
   const watchQueryOptions = useWatchQueryOptions({ query, options, client });
@@ -98,13 +112,47 @@ export function useBackgroundQuery_experimental<
     return cacheEntry?.observable || client.watchQuery(watchQueryOptions);
   });
 
+  const promise = useMemo(
+    () => observable.reobserve({ query, variables }),
+    [observable]
+  );
+
   if (!cacheEntry) {
-    // this call to .add must be conditional, ie if we don't have a cacheEntry
+    // const promise = observable.reobserve({ query, variables });
+    // decorate promise before adding to the suspense cache?
     suspenseCache.add(query, variables, {
-      promise: observable.reobserve({ query, variables }),
+      promise,
       observable,
     });
   }
 
-  return { observable };
+  // has status = 'pending'
+  // console.log(promise);
+
+  return useMemo(() => {
+    return {
+      promise,
+      observable,
+      fetchMore: (options) => {
+        const promise = observable.fetchMore(options);
+
+        suspenseCache.add(query, watchQueryOptions.variables, {
+          promise,
+          observable,
+        });
+
+        return promise;
+      },
+      refetch: (variables?: Partial<TVariables>) => {
+        const promise = observable.refetch(variables);
+
+        suspenseCache.add(query, watchQueryOptions.variables, {
+          promise,
+          observable,
+        });
+
+        return promise;
+      },
+    };
+  }, [observable]);
 }
