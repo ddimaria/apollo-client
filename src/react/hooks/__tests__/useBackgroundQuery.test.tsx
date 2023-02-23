@@ -1,14 +1,87 @@
-import React from 'react';
-import { renderHook, waitFor } from '@testing-library/react';
+import React, { Suspense } from 'react';
+import { render, screen, renderHook, waitFor } from '@testing-library/react';
+import { ErrorBoundary, ErrorBoundaryProps } from 'react-error-boundary';
 import { gql, NetworkStatus, ApolloClient } from '../../../core';
-import { MockedProvider, mockSingleLink } from '../../../testing';
-import { useBackgroundQuery_experimental as useBackgroundQuery } from '../useBackgroundQuery';
+import { MockedProvider, MockLink, mockSingleLink } from '../../../testing';
+import { useBackgroundQuery_experimental as useBackgroundQuery, useReadQuery } from '../useBackgroundQuery';
 import { ApolloProvider } from '../../context';
 import { SuspenseCache } from '../../cache';
 import { InMemoryCache } from '../../../cache';
 
+function renderIntegrationTest() {
+  // query
+  const query = gql`
+    query SimpleQuery {
+      foo {
+        bar
+      }
+    }
+  `;
+
+  const suspenseCache = new SuspenseCache();
+  const mocks = [
+    {
+      request: { query },
+      result: { data: { foo: { bar: 'hello' } } },
+    }
+  ];
+  const client = new ApolloClient({ cache: new InMemoryCache(), link: new MockLink(mocks) });
+  interface Renders<Result> {
+    errors: Error[];
+    errorCount: number;
+    suspenseCount: number;
+    count: number;
+    frames: Result[];
+  }
+  const renders: Renders<Result> = {
+    errors: [],
+    errorCount: 0,
+    suspenseCount: 0,
+    count: 0,
+    frames: [],
+  };
+  const errorBoundaryProps: ErrorBoundaryProps = {
+    fallback: <div>Error</div>,
+    onError: (error) => {
+      // renders.errorCount++;
+      // renders.errors.push(error);
+    },
+  };
+
+  function SuspenseFallback() {
+    // renders.suspenseCount++;
+
+    return <div>loading</div>;
+  }
+
+  function Child({ promise }) {
+    const { data } = useReadQuery(promise);
+    return <><h1>{data.foo.bar}</h1></>
+  }
+
+  function Parent() {
+    const { promise } = useBackgroundQuery(query);
+    return <Child promise={promise} />;
+  }
+
+  function App() {
+
+    return (
+      <ApolloProvider client={client} suspenseCache={suspenseCache}>
+        <ErrorBoundary {...errorBoundaryProps}>
+          <Suspense fallback={<SuspenseFallback />}><Parent /></Suspense>
+        </ErrorBoundary>
+      </ApolloProvider>
+    )
+  }
+
+  const { ...rest } = render(<App />);
+
+  return { ...rest };
+}
+
 describe('useBackgroundQuery', () => {
-  it('fetches a simple query with minimal config', async () => {
+  it.only('fetches a simple query with minimal config', async () => {
     const query = gql`
       query {
         hello
@@ -44,6 +117,7 @@ describe('useBackgroundQuery', () => {
     await waitFor(() => {
       expect(observable.getCurrentResult().loading).toBe(false);
     });
+    expect(promise.status).toBe('fulfilled');
     expect(observable.getCurrentResult().networkStatus).toBe(
       NetworkStatus.ready
     );
@@ -342,4 +416,14 @@ describe('useBackgroundQuery', () => {
       });
     });
   });
+
+  describe.only('integration tests', () => {
+
+    it('suspends and renders hello', async () => {
+      renderIntegrationTest();
+      expect(screen.getByText('loading')).toBeInTheDocument();
+      expect(await screen.findByText('hello')).toBeInTheDocument();
+    });
+  });
+
 });

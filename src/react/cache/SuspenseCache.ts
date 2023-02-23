@@ -56,7 +56,7 @@ export class SuspenseCache {
       observable,
     }: {
       // TODO: fix nextline
-      promise: WrappedSuspenseCachePromise<TVariables>;
+      promise: WrappedSuspenseCachePromise;
       observable: ObservableQuery<TData, TVariables>;
     }
   ) {
@@ -64,20 +64,24 @@ export class SuspenseCache {
     const map = this.queries.get(query) || new Map();
 
     promise.status = PromiseStatus.pending;
+    promise
+      .then((result) => {
+        promise.value = result;
+      })
+      .catch(() => {
+        // Throw away the error as we only care to track when the promise has
+        // been fulfilled
+        promise.status = PromiseStatus.rejected;
+      })
+      .finally(() => {
+        promise.status = PromiseStatus.fulfilled;
+        entry.fulfilled = true;
+      });
 
     const entry: CacheEntry<TData, TVariables> = {
       observable,
       fulfilled: false,
-      promise: promise
-        .catch(() => {
-          // Throw away the error as we only care to track when the promise has
-          // been fulfilled
-          promise.status = PromiseStatus.rejected;
-        })
-        .finally(() => {
-          promise.status = PromiseStatus.fulfilled;
-          entry.fulfilled = true;
-        }),
+      promise,
     };
 
     map.set(variablesKey, entry);

@@ -106,25 +106,24 @@ export function useBackgroundQuery_experimental<
   const watchQueryOptions = useWatchQueryOptions({ query, options, client });
   const { variables } = watchQueryOptions;
 
-  let cacheEntry = suspenseCache.lookup(query, variables);
 
   const [observable] = useState(() => {
     return cacheEntry?.observable || client.watchQuery(watchQueryOptions);
   });
 
-  const promise = useMemo(
-    () => observable.reobserve({ query, variables }),
-    [observable]
-  );
+
+  let cacheEntry = suspenseCache.lookup(query, variables);
 
   if (!cacheEntry) {
     // const promise = observable.reobserve({ query, variables });
     // decorate promise before adding to the suspense cache?
-    suspenseCache.add(query, variables, {
-      promise,
+    cacheEntry = suspenseCache.add(query, variables, {
+      promise: observable.reobserve({ query, variables }),
       observable,
     });
   }
+
+  const promise = cacheEntry.promise;
 
   // has status = 'pending'
   // console.log(promise);
@@ -154,5 +153,18 @@ export function useBackgroundQuery_experimental<
         return promise;
       },
     };
-  }, [observable]);
+  }, [observable, promise]);
+}
+
+export function useReadQuery(promise) {
+  console.log(promise);
+  if (promise.status === 'pending') {
+    throw promise;
+  }
+  if (promise.status === 'fulfilled') {
+    return promise.value;
+  }
+  if (promise.status === 'rejected') {
+    throw promise.reason;
+  }
 }
