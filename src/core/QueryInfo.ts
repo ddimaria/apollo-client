@@ -137,7 +137,7 @@ export class QueryInfo {
       graphQLErrors: this.graphQLErrors || [],
       networkStatus,
     });
-
+    console.log('BLUE', observableQuery)
     if (query.observableQuery) {
       this.setObservableQuery(query.observableQuery);
     }

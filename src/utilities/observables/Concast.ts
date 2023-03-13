@@ -1,4 +1,5 @@
 import { Observable, Observer, ObservableSubscription, Subscriber } from "./Observable";
+import { ObservableQuery } from "../../core";
 import { iterateObserversSafely } from "./iteration";
 import { fixObservableSubclass } from "./subclassing";
 
@@ -149,6 +150,7 @@ export class Concast<T> extends Observable<T> {
   // easy way to observe the final state of the Concast.
   private resolve: (result?: T | PromiseLike<T>) => void;
   private reject: (reason: any) => void;
+  // private observable: ObservableQuery<any>;
   public readonly promise = new Promise<T>((resolve, reject) => {
     this.resolve = resolve;
     this.reject = reject;

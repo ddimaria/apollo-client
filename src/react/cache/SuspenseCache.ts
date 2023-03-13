@@ -19,28 +19,35 @@ enum PromiseStatus {
   rejected = 'rejected',
 }
 
-interface WrappedPendingPromise extends Promise<any> {
-  status?: PromiseStatus.pending,
-  // value?: never,
-  // reason?: never,
+interface WrappedPendingPromise<TData> extends Promise<ApolloQueryResult<TData>> {
+  status: PromiseStatus.pending;
+  value?: never;
+  reason?: never;
 }
 
-interface WrappedFulfilledPromise extends Promise<any> {
-  status?: PromiseStatus.fulfilled,
-  // value?: T,
-  // reason?: never,
+interface WrappedFulfilledPromise<TData> extends Promise<ApolloQueryResult<TData>> {
+  status: PromiseStatus.fulfilled;
+  value: TData;
+  reason?: never;
 }
 
-interface WrappedRejectedPromise extends Promise<any> {
-  status?: PromiseStatus.rejected,
-  // value?: never,
-  // reason?: any,
+interface WrappedRejectedPromise<TData> extends Promise<ApolloQueryResult<TData>> {
+  status: PromiseStatus.rejected;
+  value?: TData; // can we have partial data here?
+  reason: any;
 }
 
-export type WrappedSuspenseCachePromise =
-  | WrappedPendingPromise
-  | WrappedFulfilledPromise
-  | WrappedRejectedPromise;
+export type WrappedSuspenseCachePromise<TData = any> =
+  | WrappedPendingPromise<TData>
+  | WrappedFulfilledPromise<TData>
+  | WrappedRejectedPromise<TData>;
+
+// function decoratePromise<TData>(
+//   promise: Promise<ApolloQueryResult<TData>>
+// ): WrappedSuspenseCachePromise<TData> {
+//   promise.status = PromiseStatus.pending;
+//   return promise;
+// }
 
 export class SuspenseCache {
   private queries = new Map<
@@ -55,8 +62,7 @@ export class SuspenseCache {
       promise,
       observable,
     }: {
-      // TODO: fix nextline
-      promise: WrappedSuspenseCachePromise;
+      promise: Promise<ApolloQueryResult<TData>> & WrappedSuspenseCachePromise<TData>;
       observable: ObservableQuery<TData, TVariables>;
     }
   ) {
@@ -67,6 +73,7 @@ export class SuspenseCache {
     promise
       .then((result) => {
         promise.value = result;
+        promise.observable = observable;
       })
       .catch(() => {
         // Throw away the error as we only care to track when the promise has

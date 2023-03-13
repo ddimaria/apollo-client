@@ -1,4 +1,5 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback, useRef } from 'react';
+import { equal } from '@wry/equality';
 import {
   ApolloClient,
   DocumentNode,
@@ -6,14 +7,16 @@ import {
   OperationVariables,
   TypedDocumentNode,
   WatchQueryOptions,
+  ApolloQueryResult,
 } from '../../core';
 import { compact } from '../../utilities';
 import { useApolloClient } from './useApolloClient';
+import { useSyncExternalStore } from './useSyncExternalStore';
 import {
   SuspenseQueryHookOptions,
   ObservableQueryFields,
 } from '../types/types';
-import { useDeepMemo } from './internal';
+import { useDeepMemo, useIsomorphicLayoutEffect } from './internal';
 import { WrappedSuspenseCachePromise } from '../cache/SuspenseCache';
 import { useSuspenseCache } from './useSuspenseCache';
 
@@ -106,17 +109,13 @@ export function useBackgroundQuery_experimental<
   const watchQueryOptions = useWatchQueryOptions({ query, options, client });
   const { variables } = watchQueryOptions;
 
-
   const [observable] = useState(() => {
     return cacheEntry?.observable || client.watchQuery(watchQueryOptions);
   });
 
-
   let cacheEntry = suspenseCache.lookup(query, variables);
 
   if (!cacheEntry) {
-    // const promise = observable.reobserve({ query, variables });
-    // decorate promise before adding to the suspense cache?
     cacheEntry = suspenseCache.add(query, variables, {
       promise: observable.reobserve({ query, variables }),
       observable,
@@ -125,12 +124,9 @@ export function useBackgroundQuery_experimental<
 
   const promise = cacheEntry.promise;
 
-  // has status = 'pending'
-  // console.log(promise);
-
   return useMemo(() => {
     return {
-      promise,
+      promise: promise,
       observable,
       fetchMore: (options) => {
         const promise = observable.fetchMore(options);
@@ -156,15 +152,78 @@ export function useBackgroundQuery_experimental<
   }, [observable, promise]);
 }
 
-export function useReadQuery(promise) {
-  console.log(promise);
+export function useReadQuery<TData>(promise: WrappedSuspenseCachePromise<TData>) {
+  // console.log({ promise });
   if (promise.status === 'pending') {
     throw promise;
-  }
-  if (promise.status === 'fulfilled') {
-    return promise.value;
   }
   if (promise.status === 'rejected') {
     throw promise.reason;
   }
+  const result = useObservableQueryResult(promise.observable);
+  // return promise.value;
+  return result as TData;
+}
+
+function useObservableQueryResult<TData>(observable: ObservableQuery<TData>) {
+  console.log({ observable });
+  const resultRef = useRef<ApolloQueryResult<TData>>();
+  const isMountedRef = useRef(false);
+
+  if (!resultRef.current) {
+    resultRef.current = observable.getCurrentResult();
+  }
+
+  // React keeps refs and effects from useSyncExternalStore around after the
+  // component initially mounts even if the component re-suspends. We need to
+  // track when the component suspends/unsuspends to ensure we don't try and
+  // update the component while its suspended since the observable's
+  // `next` function is called before the promise resolved.
+  //
+  // Unlike useEffect, useLayoutEffect will run its cleanup and initialization
+  // functions each time a component is suspended.
+  useIsomorphicLayoutEffect(() => {
+    isMountedRef.current = true;
+
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  return useSyncExternalStore(
+    useCallback(
+      (forceUpdate) => {
+        function handleUpdate() {
+          const previousResult = resultRef.current!;
+          const result = observable.getCurrentResult();
+
+          if (
+            previousResult.loading === result.loading &&
+            previousResult.networkStatus === result.networkStatus &&
+            equal(previousResult.data, result.data)
+          ) {
+            return;
+          }
+
+          resultRef.current = result;
+
+          if (isMountedRef.current) {
+            forceUpdate();
+          }
+        }
+
+        const subscription = observable.subscribe({
+          next: handleUpdate,
+          error: handleUpdate,
+        });
+
+        return () => {
+          subscription.unsubscribe();
+        };
+      },
+      [observable]
+    ),
+    () => resultRef.current!,
+    () => resultRef.current!
+  );
 }

@@ -1,14 +1,30 @@
 import React, { Suspense } from 'react';
 import { render, screen, renderHook, waitFor } from '@testing-library/react';
 import { ErrorBoundary, ErrorBoundaryProps } from 'react-error-boundary';
-import { gql, NetworkStatus, ApolloClient } from '../../../core';
+import {
+  gql,
+  NetworkStatus,
+  ApolloClient,
+  NormalizedCacheObject,
+  ApolloQueryResult
+} from '../../../core';
 import { MockedProvider, MockLink, mockSingleLink } from '../../../testing';
-import { useBackgroundQuery_experimental as useBackgroundQuery, useReadQuery } from '../useBackgroundQuery';
+import { WrappedSuspenseCachePromise } from '../../cache/SuspenseCache';
+import {
+  useBackgroundQuery_experimental as useBackgroundQuery,
+  useReadQuery,
+} from '../useBackgroundQuery';
 import { ApolloProvider } from '../../context';
 import { SuspenseCache } from '../../cache';
 import { InMemoryCache } from '../../../cache';
 
-function renderIntegrationTest() {
+function renderIntegrationTest<Result>({
+  client,
+  promise
+}: {
+    client?: ApolloClient<NormalizedCacheObject>;
+    promise?: Promise<ApolloQueryResult<any>>;
+} = {}) {
   // query
   const query = gql`
     query SimpleQuery {
@@ -23,65 +39,80 @@ function renderIntegrationTest() {
     {
       request: { query },
       result: { data: { foo: { bar: 'hello' } } },
-    }
+    },
   ];
-  const client = new ApolloClient({ cache: new InMemoryCache(), link: new MockLink(mocks) });
+  const _client =
+    client ||
+    new ApolloClient({
+      cache: new InMemoryCache(),
+      link: new MockLink(mocks),
+    });
   interface Renders<Result> {
     errors: Error[];
     errorCount: number;
     suspenseCount: number;
     count: number;
-    frames: Result[];
   }
   const renders: Renders<Result> = {
     errors: [],
     errorCount: 0,
     suspenseCount: 0,
     count: 0,
-    frames: [],
   };
   const errorBoundaryProps: ErrorBoundaryProps = {
     fallback: <div>Error</div>,
     onError: (error) => {
-      // renders.errorCount++;
-      // renders.errors.push(error);
+      renders.errorCount++;
+      renders.errors.push(error);
     },
   };
 
   function SuspenseFallback() {
-    // renders.suspenseCount++;
-
+    renders.suspenseCount++;
     return <div>loading</div>;
   }
 
-  function Child({ promise }) {
-    const { data } = useReadQuery(promise);
-    return <><h1>{data.foo.bar}</h1></>
+  function Child({ promise }: { promise: WrappedSuspenseCachePromise }) {
+    const { data } = useReadQuery<{ data: { foo: { bar: string } } }>(promise);
+    return <div>{data.foo.bar}</div>;
   }
 
-  function Parent() {
+  function UBQParent() {
     const { promise } = useBackgroundQuery(query);
+    // count renders in the parent component
+    renders.count++;
     return <Child promise={promise} />;
   }
 
-  function App() {
-
-    return (
-      <ApolloProvider client={client} suspenseCache={suspenseCache}>
-        <ErrorBoundary {...errorBoundaryProps}>
-          <Suspense fallback={<SuspenseFallback />}><Parent /></Suspense>
-        </ErrorBoundary>
-      </ApolloProvider>
-    )
+  function Parent({ promise }) {
+    // const { promise } = useBackgroundQuery(query);
+    // count renders in the parent component
+    // renders.count++;
+    if (promise) {
+      renders.count++;
+      return <Child promise={promise} />;
+    }
+    return <UBQParent />;
   }
 
-  const { ...rest } = render(<App />);
+  function App({ promise }) {
+    return (
+      <ApolloProvider client={_client} suspenseCache={suspenseCache}>
+        <ErrorBoundary {...errorBoundaryProps}>
+          <Suspense fallback={<SuspenseFallback />}>
+            <Parent promise={promise} />
+          </Suspense>
+        </ErrorBoundary>
+      </ApolloProvider>
+    );
+  }
 
-  return { ...rest };
+  const { ...rest } = render(<App promise={promise} />);
+  return { ...rest, query, client: _client, renders };
 }
 
 describe('useBackgroundQuery', () => {
-  it.only('fetches a simple query with minimal config', async () => {
+  it('fetches a simple query with minimal config', async () => {
     const query = gql`
       query {
         hello
@@ -160,7 +191,7 @@ describe('useBackgroundQuery', () => {
           }
         );
 
-        const { observable } = result.current;
+        const { promise, observable } = result.current;
 
         // the result is loading and initial data is in the cache
         expect(observable.getCurrentResult().loading).toBe(true);
@@ -170,10 +201,12 @@ describe('useBackgroundQuery', () => {
         expect(observable.getCurrentResult().networkStatus).toBe(
           NetworkStatus.loading
         );
+        expect(promise.status).toBe('pending');
 
         await waitFor(() => {
           expect(observable.getCurrentResult().loading).toBe(false);
         });
+        expect(promise.status).toBe('fulfilled');
         expect(observable.getCurrentResult().networkStatus).toBe(
           NetworkStatus.ready
         );
@@ -216,7 +249,7 @@ describe('useBackgroundQuery', () => {
           }
         );
 
-        const { observable } = result.current;
+        const { promise, observable } = result.current;
 
         // cache data exists so the observable never enters loading state
         await waitFor(() => {
@@ -225,10 +258,14 @@ describe('useBackgroundQuery', () => {
         expect(observable.getCurrentResult().networkStatus).toBe(
           NetworkStatus.ready
         );
+        expect(promise.status).toBe('pending');
         // cache data is returned without going to the network
         expect(observable.getCurrentResult().data).toEqual({
           hello: 'from cache',
         });
+
+        // TODO: what is the expected behavior here?
+        // expect(promise.status).toBe('fulfilled');
       });
       it('partial data is present in the cache so it is ignored and network request is made', async () => {
         const query = gql`
@@ -269,7 +306,7 @@ describe('useBackgroundQuery', () => {
           }
         );
 
-        const { observable } = result.current;
+        const { promise, observable } = result.current;
 
         // the result is loading and initial data is in the cache
         expect(observable.getCurrentResult().loading).toBe(true);
@@ -279,6 +316,7 @@ describe('useBackgroundQuery', () => {
         expect(observable.getCurrentResult().networkStatus).toBe(
           NetworkStatus.loading
         );
+        expect(promise.status).toBe('pending');
 
         await waitFor(() => {
           expect(observable.getCurrentResult().loading).toBe(false);
@@ -286,6 +324,7 @@ describe('useBackgroundQuery', () => {
         expect(observable.getCurrentResult().networkStatus).toBe(
           NetworkStatus.ready
         );
+        expect(promise.status).toBe('fulfilled');
         // data has been replaced by the link data
         expect(observable.getCurrentResult().data).toEqual({
           hello: 'from link',
@@ -330,7 +369,7 @@ describe('useBackgroundQuery', () => {
           }
         );
 
-        const { observable } = result.current;
+        const { promise, observable } = result.current;
 
         expect(observable.getCurrentResult().loading).toBe(true);
         // do not return initial cache data with network-only fetch policy
@@ -338,6 +377,7 @@ describe('useBackgroundQuery', () => {
         expect(observable.getCurrentResult().networkStatus).toBe(
           NetworkStatus.loading
         );
+        expect(promise.status).toBe('pending');
 
         await waitFor(() => {
           expect(observable.getCurrentResult().loading).toBe(false);
@@ -345,6 +385,7 @@ describe('useBackgroundQuery', () => {
         expect(observable.getCurrentResult().networkStatus).toBe(
           NetworkStatus.ready
         );
+        expect(promise.status).toBe('fulfilled');
         // data has been replaced by the link data
         expect(observable.getCurrentResult().data).toEqual({
           hello: 'from link',
@@ -395,6 +436,7 @@ describe('useBackgroundQuery', () => {
         expect(observable.getCurrentResult().networkStatus).toBe(
           NetworkStatus.loading
         );
+        expect(promise.status).toBe('pending');
 
         await waitFor(() => {
           expect(observable.getCurrentResult().loading).toBe(false);
@@ -417,13 +459,87 @@ describe('useBackgroundQuery', () => {
     });
   });
 
-  describe.only('integration tests', () => {
-
+  describe('integration tests', () => {
     it('suspends and renders hello', async () => {
-      renderIntegrationTest();
+      const { renders } = renderIntegrationTest();
+      // ensure the hook suspends immediately
+      expect(renders.suspenseCount).toBe(1);
       expect(screen.getByText('loading')).toBeInTheDocument();
+
+      // the parent component re-renders when promise fulfilled
       expect(await screen.findByText('hello')).toBeInTheDocument();
+      expect(renders.count).toBe(2);
     });
   });
 
+  it('reacts to cache updates', async () => {
+    const { renders, client, query } = renderIntegrationTest();
+
+    expect(renders.suspenseCount).toBe(1);
+    expect(screen.getByText('loading')).toBeInTheDocument();
+
+    // the parent component re-renders when promise fulfilled
+    expect(await screen.findByText('hello')).toBeInTheDocument();
+    expect(renders.count).toBe(2);
+
+    client.writeQuery({
+      query,
+      data: { foo: { bar: 'baz' } },
+    });
+
+    // the parent component re-renders when promise fulfilled
+    expect(await screen.findByText('baz')).toBeInTheDocument();
+
+    expect(renders.suspenseCount).toBe(1);
+
+    client.writeQuery({
+      query,
+      data: { foo: { bar: 'bat' } },
+    });
+
+    expect(await screen.findByText('bat')).toBeInTheDocument();
+
+    expect(renders.suspenseCount).toBe(1);
+  });
+
+  it.only('is compatible with client.query()', async () => {
+    const query = gql`
+      query SimpleQuery {
+        foo {
+          bar
+        }
+      }
+    `;
+    const mocks = [
+      {
+        request: { query },
+        result: { data: { foo: { bar: 'hello' } } },
+      },
+    ];
+    const client = new ApolloClient({
+      cache: new InMemoryCache(),
+      link: new MockLink(mocks),
+    });
+
+    const promise = client.query({ query });
+    console.log(promise);
+
+    const { renders } = renderIntegrationTest({ promise });
+
+    // client.writeQuery({
+    //   query,
+    //   data: { foo: { bar: 'bat' } },
+    // });
+    // expect(renders.suspenseCount).toBe(1);
+
+    // expect(await screen.findByText('bat')).toBeInTheDocument();
+  });
+
+  // it('suspends when partial data is in the cache (test all cache policies)', async () => {
+
+  // });
+
+  // it('uses useTransition to determine whether to resuspend on refetch', async () => {
+
+  // });
 });

@@ -1245,8 +1245,14 @@ export class QueryManager<TStore> {
         : fromVariables(normalized.variables!)
     );
 
-    concast.promise.then(cleanupCancelFn, cleanupCancelFn);
+    console.log({ queryInfo });
+    if (queryInfo.observableQuery) {
+      // queryInfo.observableQuery is null here on initial client.query() call
+      concast.promise.observable = queryInfo.observableQuery;
+      console.log("CONCAST PROMISE", concast.promise.observable);
+    }
 
+    concast.promise.then(cleanupCancelFn, cleanupCancelFn);
     return concast;
   }
 
