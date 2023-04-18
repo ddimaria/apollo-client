@@ -1,4 +1,4 @@
-import { useMemo, useRef, useCallback } from 'react';
+import React, { useMemo, useRef, useCallback } from 'react';
 import {
   ApolloClient,
   DocumentNode,
@@ -166,18 +166,27 @@ export function useReadQuery<TData>(
   suspenseCache?: SuspenseCache
 ) {
   const _suspenseCache = suspenseCache || useSuspenseCache();
-  const prevPromise = useRef(promise);
 
-  if (prevPromise.current !== promise) {
-    invariant.warn(
-      'The promise you have provided is not stable across renders; this may cause `useReadQuery` to return incorrect data. If you are passing it via `options`, please ensure you are providing the same SuspenseCache to both `useBackgroundQuery` and `useReadQuery`.'
-    );
-  }
-
-  prevPromise.current = promise;
+  // const prevPromise = useRef(promise);
+  // React.useEffect(() => {
+  //   console.log('effect running');
+  //   if (promise !== prevPromise.current) {
+  //     invariant.warn(
+  //       'The promise you have provided is not stable across renders. This may cause useReadQuery to return incorrect data.'
+  //     );
+  //   }
+  // }, [promise, prevPromise.current]);
+  // prevPromise.current = promise;
 
   const result = __use(promise);
   const subscription = _suspenseCache.getSubscriptionFromPromise(promise);
+
+  if (!subscription) {
+    invariant.warn(
+      'useReadQuery failed to find the subscription to your request from the promise provided. Please ensure you are passing promise returned by useBackgroundQuery. If you are passing the SuspenseCache directly to the hook via options, ensure the same SuspenseCache is being used by both useBackgroundQuery and useReadQuery.'
+    );
+  }
+  console.log({ result });
   return useSyncExternalStore(
     subscription?.listen ||
       (() => () => {

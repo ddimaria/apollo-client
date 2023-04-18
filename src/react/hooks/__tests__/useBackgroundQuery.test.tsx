@@ -17,11 +17,11 @@ import { ApolloProvider } from '../../context';
 import { SuspenseCache } from '../../cache';
 import { InMemoryCache } from '../../../cache';
 
-function wait(delay: number) {
-  return new Promise((resolve) => setTimeout(resolve, delay));
-}
+// function wait(delay: number) {
+//   return new Promise((resolve) => setTimeout(resolve, delay));
+// }
 
-function renderIntegrationTest<Result>({
+function renderIntegrationTest({
   client,
   variables,
 }: {
@@ -125,7 +125,7 @@ function renderIntegrationTest<Result>({
   return { ...rest, query, client: _client, renders };
 }
 
-function renderVariablesIntegrationTest<Result>({
+function renderVariablesIntegrationTest({
   variables,
   client,
 }: {
@@ -195,27 +195,39 @@ function renderVariablesIntegrationTest<Result>({
   }: {
     promise: Promise<ApolloQueryResult<QueryData>>;
   }) {
-    const { data } = useReadQuery<QueryData>(promise);
+    const result = useReadQuery<QueryData>(promise);
     return (
       <div>
-        {data.character.id} - {data.character.name}
+        {result?.data?.character.id} - {result?.data?.character.name}
       </div>
     );
   }
 
-  function ParentWithVariables({ variables }: { variables: QueryVariables }) {
+  function ParentWithVariables({
+    variables,
+    promise: _promise,
+  }: {
+    variables: QueryVariables;
+    promise?: Promise<ApolloQueryResult<QueryData>>;
+  }) {
     const { promise } = useBackgroundQuery(query, { variables });
     // count renders in the parent component
     renders.count++;
-    return <Child promise={promise} />;
+    return <Child promise={_promise || promise} />;
   }
 
-  function App({ variables }: { variables: QueryVariables }) {
+  function App({
+    variables,
+    promise: _promise,
+  }: {
+    variables: QueryVariables;
+    promise?: Promise<ApolloQueryResult<QueryData>>;
+  }) {
     return (
       <ApolloProvider client={_client} suspenseCache={suspenseCache}>
         <ErrorBoundary {...errorBoundaryProps}>
           <Suspense fallback={<SuspenseFallback />}>
-            <ParentWithVariables variables={variables} />
+            <ParentWithVariables variables={variables} promise={_promise} />
           </Suspense>
         </ErrorBoundary>
       </ApolloProvider>
@@ -540,7 +552,6 @@ describe('useBackgroundQuery', () => {
   });
 
   it('reacts to variables updates', async () => {
-    // TODO: this test triggers the warning re: promise not stable across renders
     const { App, renders, rerender } = renderVariablesIntegrationTest({
       variables: { id: '1' },
     });
@@ -551,6 +562,40 @@ describe('useBackgroundQuery', () => {
     expect(await screen.findByText('1 - Spider-Man')).toBeInTheDocument();
 
     rerender(<App variables={{ id: '2' }} />);
+
+    expect(renders.suspenseCount).toBe(2);
+    expect(screen.getByText('loading')).toBeInTheDocument();
+
+    expect(await screen.findByText('2 - Black Widow')).toBeInTheDocument();
+  });
+
+  it.only('logs warning if subscription cannot be found', async () => {
+    // TODO: this test triggers the warning re: promise not stable across renders
+    const { App, renders, rerender, query } = renderVariablesIntegrationTest({
+      variables: { id: '1' },
+    });
+
+    expect(renders.suspenseCount).toBe(1);
+    expect(screen.getByText('loading')).toBeInTheDocument();
+
+    expect(await screen.findByText('1 - Spider-Man')).toBeInTheDocument();
+
+    // render useBackgroundQuery with new suspense cache, but same variables + query
+    // const { promise } = useBackgroundQuery(query, { variables });
+    const suspenseCache = new SuspenseCache();
+    const { result } = renderHook(() => useBackgroundQuery(query), {
+      wrapper: ({ children }) => (
+        <ApolloProvider
+          suspenseCache={suspenseCache}
+          client={new ApolloClient({ cache: new InMemoryCache() })}
+        >
+          {children}
+        </ApolloProvider>
+      ),
+    });
+    console.log(result.current.promise);
+    // pass promise here
+    rerender(<App variables={{ id: '2' }} promise={result.current.promise} />);
 
     expect(renders.suspenseCount).toBe(2);
     expect(screen.getByText('loading')).toBeInTheDocument();
